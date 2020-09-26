@@ -1,3 +1,7 @@
 test.py
 __pycache__
 *.pkl
+*.npy
+*.json
+*.csv
+*.svg

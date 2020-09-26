@@ -13,6 +13,7 @@
 # cmp_to_key
 
 from functools import *
+from collections import *
 
 def fixedParamFunc(func, *args, **kwargs):
     """封装部分参数固定的函数
@@ -28,3 +29,14 @@ def fibonacci(n):
     if n < 2:
         return n
     return fibonacci(n-2) + fibonacci(n-1)
+
+def count(li):
+    """输入一个可迭代对象，返回一个计数的default dict
+
+    方法：most_common
+    查看最常见出现的k个元素：
+    Counter('abracadabra').most_common(k)
+    
+    在统计文章词频等地方时推荐使用
+    """
+    return Counter(li)
