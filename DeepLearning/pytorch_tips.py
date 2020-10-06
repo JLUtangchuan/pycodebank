@@ -3,10 +3,15 @@
 # 1. 网络定义 resnet
 # 2. 数据集导入、预处理
 # 3. 模型多卡训练
-# 4. tensorboard可视化 TODO
+# 4. tensorboard可视化
 # 5. 模型的定期保存以及重启训练
-# 6. 模型评价 TODO
+# 6. 模型评价
 # 7. 加入钩子函数 TODO
+
+# 附加任务
+# A1. 分布式训练优化
+# A2. 自定义数据集
+# A3. 各个模块拆分成独立文件、函数解耦
 
 from IPython import embed # 调试用
 from tqdm import tqdm
@@ -16,20 +21,23 @@ from torch import nn
 from torch.nn import functional as F
 import torchvision
 import torchvision.transforms as transforms
+from torch.utils.tensorboard import SummaryWriter
 
 import time, datetime
 import numpy as np
 
 # 0. 参数设置
+writer = SummaryWriter('./train_log')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 batch_size = 512
 learning_rate = 1e-4
 epochs = 5
-num_workers = 8
+num_workers = 4
 
 ###################################################################
 # utils
 import datetime
+import time
 import os
 from collections import defaultdict
 
@@ -53,7 +61,6 @@ def getLatest(li):
     time_li = li.copy()
     time_li = sorted(time_li, key=lambda date: parseTimeStamp(date))
     return time_li
-
 
 def getFiles(path=r".\\"):
     """输入路径名称，返回该路径下的文件名、文件夹名构成的字典
@@ -79,6 +86,15 @@ def getDeterminedFiles(path=r".\\", tail=None, keyword=None):
         li = filter(lambda x: keyword in x, li)
 
     return list(li)
+
+def timer(func):
+    def time_wrapper(*args, **kwargs):
+        start_time = time.time()
+        res = func(*args, **kwargs)
+        end_time = time.time()
+        print('Took {} second'.format(end_time - start_time))
+        return res
+    return time_wrapper
 
 ###################################################################
 
@@ -122,7 +138,7 @@ class ResNet(nn.Module):
         self.ap = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(channels[-1], out_dim)
 
-    def forward(self, x):
+    def _forward_operation(self, x):
         out = self.conv1(x)
         out = self.relu(out)
         out = self.mp1(out)
@@ -134,6 +150,10 @@ class ResNet(nn.Module):
         out = torch.flatten(out, 1)
         # out = out.view(batch_size, -1)
         out = self.fc(out)
+        return out
+
+    def forward(self, x):
+        out = self._forward_operation(x)
         return out
     
     def _make_layer(self, input_channel, loop, channel, stride=1):
@@ -167,15 +187,83 @@ def resnet_18(channels = 3):
         resnet_18 = nn.DataParallel(resnet_18.cuda())
     return resnet_18
 
+def accuracy(predict, y, ks=(1,)):
+    """计算topk准确率
+
+    Args:
+        predict ([type]): [description]
+        y ([type]): [description]
+        k (tuple, optional): [description]. Defaults to (1,).
+    """
+    with torch.no_grad():
+        size = y.shape[0]
+        maxk = max(ks)
+        _, idx = predict.topk(maxk, 1)
+        return (len([1 for i, t in zip(y, idx[:,:k]) if i in t])/size for k in ks)
+
+def validate(net, val_loader, loss_func):
+    """验证
+    计算验证集loss
+    计算top_k accuracy
+    计算 Recall Precision
+    计算mAP
+    Args:
+        val_loader ([type]): [description]
+        loss_func ([type]): [description]
+    """
+    total_loss = AverageMeter("Val Loss", ":.4f")
+    top1 = AverageMeter("Top1 accuracy", ":.4f")
+    top2 = AverageMeter("Top2 accuracy", ":.4f")
+    net.eval()
+    with torch.no_grad():
+        for x, y in val_loader:
+            x = x.cuda(non_blocking=True)
+            y = y.cuda(non_blocking=True)
+            predict = net(x)
+            size = x.shape[0]
+            loss = loss_func(predict, y)
+            total_loss.update(loss.item(), size)
+            t1, t2 = accuracy(predict, y, ks=(1, 2))
+            top1.update(t1, size)
+            top2.update(t2, size)
+    return total_loss, top1, top2
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self, name, fmt=':f'):
+        self.name = name
+        self.fmt = fmt
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = '{name} {avg' + self.fmt + '}'
+        return fmtstr.format(**self.__dict__)
+
 
 def train():
     model_name = get_model()
     if model_name is None:
         net = resnet_18(channels = 1)
+        start_epoch = 0
     else:
         net = resnet_18(channels = 1)
         net_dict = torch.load(model_name)
         net.load_state_dict(net_dict)
+
+        start_epoch = int(model_name.split('Epoch@')[1].split('.ckpt')[0])
         # net = nn.DataParallel(net.cuda())
         # net = net.cuda()
 
@@ -200,33 +288,61 @@ def train():
                                             batch_size=batch_size, 
                                             shuffle=False,
                                             num_workers = num_workers)
+    
     # 3. 模型多卡训练
     # 首先先定义loss和optmizer
     # 定义模型加载和保存模块
     ce_loss = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
     
+    # 4. 模型评价
+    # 两部分：1. 每次前向传播过程中计算的metric
+    #         2. 每个epoch结束后跑一遍验证集，拿到验证集loss和训练集loss
     total_step = len(train_loader)
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, start_epoch+epochs):
+        train_loss = AverageMeter("Train Loss", ":.4f")
         for i, (x, y) in tqdm(enumerate(train_loader)):
             x = x.cuda(non_blocking=True)
             y = y.cuda(non_blocking=True)
 
+            net.train()
             predict = net(x)
             loss = ce_loss(predict, y)
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            train_loss.update(loss.item(), y.shape[0])
 
-            if (i+1)%100 == 0:
-                print('Epoch [{}/{}], Step [{}/{}], Loss {:.4f} '
-                        .format(epoch+1, epochs, i+1, total_step, loss.item()))
-        filename = "./checkpoints/resnet_model@{}@loss@{:.4f}.ckpt".format(timeStampStr(), loss.item())
+            writer.add_scalar('train loss', train_loss.val, 1+i+total_step*epoch)
+
+        # 跑验证集
+        val_loss, top1, top2 = validate(net, test_loader, ce_loss)
+        
+        # tensorboard
+        # 服务器指令
+        # tensorboard --logdir=./train_log --port 8032
+        # 本地指令
+        # ssh -L 8032:127.0.0.1:8032 tangchuan@59.72.118.127
+        # 本地访问
+        # 127.0.0.1:8032
+        # 
+        # scaler
+        # writer.add_scalar('train loss', train_loss.avg, epoch)
+        # writer.add_scalar('val loss', val_loss.avg, epoch)
+        # writer.add_scalar('top1 accuracy', top1.avg, epoch)
+
+        print("Epoch [{}/{}] ".format(epoch+1, start_epoch+epochs), val_loss, train_loss,  top1, top2)
+
+        # 模型保存
+        filename = "./checkpoints/resnet_model@{}@Epoch@{}.ckpt".format(timeStampStr(), str(epoch+1))
         torch.save(net.state_dict(), filename)
     
-
+@timer
+def main():
+    train()
 
 
 if __name__ == "__main__":
-    train()
+    main()
+

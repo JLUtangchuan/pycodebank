@@ -6,3 +6,4 @@ __pycache__
 *.csv
 *.svg
 *.ckpt
+*/train_log/*
