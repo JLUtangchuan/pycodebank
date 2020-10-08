@@ -343,6 +343,13 @@ def main():
     train()
 
 
+def summary_test():
+    from PytorchCode.model_summary import summary
+    net = resnet_18(channels = 3)
+    x = torch.rand((batch_size, 3, 224, 224))
+    summary(net, x)
+
 if __name__ == "__main__":
-    main()
+    # main()
+    summary_test()
 
