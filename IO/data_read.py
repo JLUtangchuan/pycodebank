@@ -3,6 +3,7 @@
 import numpy as np
 import os
 from collections import defaultdict
+import json
 
 # 文件名获取相关
 def getFiles(path=r".\\"):
@@ -37,6 +38,11 @@ def getTxtAsMat(f, sep=',', header=None):
     """
     import pandas as pd
     return pd.read_csv(f, sep=sep, header=header)
+
+def getJson(filename):
+    with open(filename, 'r') as f:
+        dic = json.load(f) 
+    return dic
 
 if __name__ == "__main__":
     pass
