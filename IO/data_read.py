@@ -39,10 +39,29 @@ def getTxtAsMat(f, sep=',', header=None):
     import pandas as pd
     return pd.read_csv(f, sep=sep, header=header)
 
+def getDirNames(path):
+    """返回路径下文件夹名称
+
+    Args:
+        path ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
+    dbtype_list = os.listdir(path)
+    for dbtype in dbtype_list:
+        if os.path.isfile(os.path.join(path,dbtype)):
+            dbtype_list.remove(dbtype)
+    return dbtype_list
+
+def mkdir(dir):
+    if not os.path.exists(dir):
+        os.mkdir(dir)
+
 def getJson(filename):
     with open(filename, 'r') as f:
         dic = json.load(f) 
     return dic
 
 if __name__ == "__main__":
-    pass
+    mkdir('test')

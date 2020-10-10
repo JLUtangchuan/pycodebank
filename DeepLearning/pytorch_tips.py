@@ -9,9 +9,9 @@
 # 7. 加入钩子函数 TODO
 
 # 附加任务
-# A1. 分布式训练优化
-# A2. 自定义数据集
-# A3. 各个模块拆分成独立文件、函数解耦
+# A1. 分布式训练优化 TODO
+# A2. 自定义数据集 TODO
+# A3. 各个模块拆分成独立文件、函数解耦 TODO
 
 from IPython import embed # 调试用
 from tqdm import tqdm
@@ -26,6 +26,8 @@ from torch.utils.tensorboard import SummaryWriter
 import time, datetime
 import numpy as np
 
+from PytorchCode.loss_col import FocalLoss
+
 # 0. 参数设置
 writer = SummaryWriter('./train_log')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -33,6 +35,9 @@ batch_size = 512
 learning_rate = 1e-4
 epochs = 5
 num_workers = 4
+channels = 1
+type_num = 2
+torch.backends.cudnn.benchmark = True
 
 ###################################################################
 # utils
@@ -181,7 +186,7 @@ def get_model(name = None):
 
 
 def resnet_18(channels = 3):
-    resnet_18 = ResNet(channels, [64,128,256,512], [2, 2, 2, 2], 10)
+    resnet_18 = ResNet(channels, [64,128,256,512], [2, 2, 2, 2], type_num)
     if torch.cuda.device_count() > 1: 
         print("Use ", torch.cuda.device_count(), "GPUs!")
         resnet_18 = nn.DataParallel(resnet_18.cuda())
@@ -213,7 +218,7 @@ def validate(net, val_loader, loss_func):
     """
     total_loss = AverageMeter("Val Loss", ":.4f")
     top1 = AverageMeter("Top1 accuracy", ":.4f")
-    top2 = AverageMeter("Top2 accuracy", ":.4f")
+    # top2 = AverageMeter("Top2 accuracy", ":.4f")
     net.eval()
     with torch.no_grad():
         for x, y in val_loader:
@@ -225,8 +230,8 @@ def validate(net, val_loader, loss_func):
             total_loss.update(loss.item(), size)
             t1, t2 = accuracy(predict, y, ks=(1, 2))
             top1.update(t1, size)
-            top2.update(t2, size)
-    return total_loss, top1, top2
+            # top2.update(t2, size)
+    return total_loss, top1
 
 
 class AverageMeter(object):
@@ -256,10 +261,10 @@ class AverageMeter(object):
 def train():
     model_name = get_model()
     if model_name is None:
-        net = resnet_18(channels = 1)
+        net = resnet_18(channels = channels)
         start_epoch = 0
     else:
-        net = resnet_18(channels = 1)
+        net = resnet_18(channels = channels)
         net_dict = torch.load(model_name)
         net.load_state_dict(net_dict)
 
@@ -270,29 +275,31 @@ def train():
 
     # 2. 数据集导入、预处理
     # 后面需要自己整一个自定义的
-    train_dataset = torchvision.datasets.MNIST(root='../../data', 
-                                            train=True, 
-                                            transform=transforms.ToTensor(),  
-                                            download=True)
+    from PytorchCode.data import train_loader, val_loader, test_loader
+    # train_dataset = torchvision.datasets.MNIST(root='../../data', 
+    #                                         train=True, 
+    #                                         transform=transforms.ToTensor(),  
+    #                                         download=True)
 
-    test_dataset = torchvision.datasets.MNIST(root='../../data', 
-                                            train=False, 
-                                            transform=transforms.ToTensor())
+    # test_dataset = torchvision.datasets.MNIST(root='../../data', 
+    #                                         train=False, 
+    #                                         transform=transforms.ToTensor())
 
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
-                                            batch_size=batch_size, 
-                                            shuffle=True,
-                                            num_workers = num_workers)
+    # train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
+    #                                         batch_size=batch_size, 
+    #                                         shuffle=True,
+    #                                         num_workers = num_workers)
 
-    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, 
-                                            batch_size=batch_size, 
-                                            shuffle=False,
-                                            num_workers = num_workers)
+    # test_loader = torch.utils.data.DataLoader(dataset=test_dataset, 
+    #                                         batch_size=batch_size, 
+    #                                         shuffle=False,
+    #                                         num_workers = num_workers)
     
     # 3. 模型多卡训练
     # 首先先定义loss和optmizer
     # 定义模型加载和保存模块
-    ce_loss = nn.CrossEntropyLoss()
+    # ce_loss = nn.CrossEntropyLoss()
+    focal_loss = FocalLoss(class_num=type_num, alpha=torch.tensor([0.25, 0.75]))
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
     
     # 4. 模型评价
@@ -307,17 +314,19 @@ def train():
 
             net.train()
             predict = net(x)
-            loss = ce_loss(predict, y)
+            # loss = ce_loss(predict, y)
+            loss = focal_loss(predict, y)
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             train_loss.update(loss.item(), y.shape[0])
 
+            # tensorboard
             writer.add_scalar('train loss', train_loss.val, 1+i+total_step*epoch)
 
         # 跑验证集
-        val_loss, top1, top2 = validate(net, test_loader, ce_loss)
+        val_loss, top1 = validate(net, test_loader, focal_loss)
         
         # tensorboard
         # 服务器指令
@@ -332,9 +341,11 @@ def train():
         # writer.add_scalar('val loss', val_loss.avg, epoch)
         # writer.add_scalar('top1 accuracy', top1.avg, epoch)
 
-        print("Epoch [{}/{}] ".format(epoch+1, start_epoch+epochs), val_loss, train_loss,  top1, top2)
+        print("Epoch [{}/{}] ".format(epoch+1, start_epoch+epochs), val_loss, train_loss,  top1)
 
         # 模型保存
+        if not os.path.exists('checkpoints'):
+            os.mkdir('checkpoints')
         filename = "./checkpoints/resnet_model@{}@Epoch@{}.ckpt".format(timeStampStr(), str(epoch+1))
         torch.save(net.state_dict(), filename)
     
@@ -345,11 +356,11 @@ def main():
 
 def summary_test():
     from PytorchCode.model_summary import summary
-    net = resnet_18(channels = 3)
-    x = torch.rand((batch_size, 3, 224, 224))
+    net = resnet_18(channels = channels)
+    x = torch.rand((batch_size, channels, 224, 224))
     summary(net, x)
 
 if __name__ == "__main__":
-    # main()
-    summary_test()
+    main()
+    # summary_test()
 
