@@ -8,7 +8,7 @@ import torchvision
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
-
+# 其实用torchvision.datasets.ImageFolder这个处理这种格式的分类图片会更便捷
 num_workers = 8
 batch_size = 128
 DATA_PATH = '/home/tangchuan/workdir/data/chest_xray/'
@@ -79,7 +79,7 @@ train_loader = DataLoader(dataset=train_dataset,
                             shuffle=True,
                             num_workers = num_workers)
 val_loader = DataLoader(dataset=val_dataset, 
-                            batch_size=8, 
+                            batch_size=16, 
                             shuffle=False)
 test_loader = DataLoader(dataset=test_dataset, 
                             batch_size=batch_size,  # 小一点，方便可视化

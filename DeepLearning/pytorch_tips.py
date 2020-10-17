@@ -25,6 +25,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import time, datetime
 import numpy as np
+from PIL import ImageDraw, ImageFont
 
 from PytorchCode.loss_col import FocalLoss
 
@@ -233,6 +234,30 @@ def validate(net, val_loader, loss_func):
             # top2.update(t2, size)
     return total_loss, top1
 
+def visPic(net, writer, loader, cats, step=0):
+    """可视化结果
+    """
+    tor2img = transforms.ToPILImage()
+    with torch.no_grad():
+        x, y = next(iter(loader))
+        predict = net(x)
+        _, cls_num = predict.max(axis=1)
+        pred = [cats[i.item()] for i in cls_num]
+        gt = [cats[i.item()] for i in y]
+
+        ttfont = ImageFont.truetype("/home/tangchuan/Download/simhei.ttf",20)
+        
+        imgs = []
+        for p, g, img in zip(pred, gt, x):
+            img = tor2img(img)
+            draw = ImageDraw.Draw(img)
+            draw.text((90, 100), f"GT:{g}-PRED:{p}",fill=(200), font=ttfont)
+            imgs.append(img)
+
+        ts = transforms.ToTensor()
+        timg = [ts(i) for i in imgs]
+        grid = torchvision.utils.make_grid(timg, padding=2)
+        writer.add_image('Val Images', grid, step)
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -275,7 +300,7 @@ def train():
 
     # 2. 数据集导入、预处理
     # 后面需要自己整一个自定义的
-    from PytorchCode.data import train_loader, val_loader, test_loader
+    from PytorchCode.data import train_loader, val_loader, test_loader, cats
     # train_dataset = torchvision.datasets.MNIST(root='../../data', 
     #                                         train=True, 
     #                                         transform=transforms.ToTensor(),  
@@ -327,7 +352,8 @@ def train():
 
         # 跑验证集
         val_loss, top1 = validate(net, test_loader, focal_loss)
-        
+        # 可视化
+        visPic(net, writer, val_loader, cats, epoch)
         # tensorboard
         # 服务器指令
         # tensorboard --logdir=./train_log --port 8032

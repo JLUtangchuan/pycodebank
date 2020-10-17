@@ -64,4 +64,5 @@ def getJson(filename):
     return dic
 
 if __name__ == "__main__":
-    mkdir('test')
+    # mkdir('test')
+    getJson('./hello.json')
