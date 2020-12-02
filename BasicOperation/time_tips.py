@@ -2,16 +2,18 @@
 
 import datetime
 import time
+import functools
 
 # 与时间相关的函数
 
 
 def timer(func):
+    @functools.wraps(func)
     def time_wrapper(*args, **kwargs):
         start_time = time.time()
         res = func(*args, **kwargs)
         end_time = time.time()
-        print('Took %f second' % (end_time - start_time))
+        print('%s took %f second' % (func.__name__, end_time - start_time))
         return res
     return time_wrapper
 
