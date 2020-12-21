@@ -15,7 +15,7 @@
 # 2. 各种Style与颜色（加粗、斜体、下划线、高亮、闪烁、。。。）
 # 3. Table制作
 # 4. Markdown
-# 5. 
+# 5. 进度条（进度条确实好看）
 from rich.markdown import Markdown
 from rich.console import Console
 from rich.table import Column, Table
@@ -47,6 +47,7 @@ table.add_row(
     "$275,000,000",
     "$393,151,347",
 )
+console.print(table)
 table.add_row(
     "Dec 15, 2017",
     "Star Wars Ep. VIII: The Last Jedi",
