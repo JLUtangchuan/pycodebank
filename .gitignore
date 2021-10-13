@@ -8,4 +8,4 @@ __pycache__
 *.ckpt
 *.log
 train_log
-data
+test_dir
